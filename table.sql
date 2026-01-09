@@ -1,0 +1,23 @@
+CREATE TABLE contracts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    serial_no INT,
+    category_name VARCHAR(255),
+    bid_no VARCHAR(100),
+    product TEXT,
+    brand VARCHAR(255),
+    model VARCHAR(255),
+    ordered_quantity VARCHAR(50),
+    price VARCHAR(50),
+    total_value VARCHAR(50),
+    buyer_dept_org TEXT,
+    organization_name TEXT,
+    buyer_designation TEXT,
+    state VARCHAR(100),
+    buyer_department TEXT,
+    office_zone TEXT,
+    buying_mode VARCHAR(100),
+    contract_date VARCHAR(100),
+    order_status VARCHAR(100),
+    download_link TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
