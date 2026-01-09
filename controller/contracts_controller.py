@@ -11,6 +11,9 @@ from mysql.connector import Error
 from solver.captcha_solver import ensemble_solve
 
 
+# --------------------------------------------------
+# DATABASE CONFIG
+# --------------------------------------------------
 DB_CONFIG = {
     "host": "localhost",
     "user": "root",
@@ -33,12 +36,39 @@ class ContractsController:
         self.output_csv = self.output_dir / "contracts_merged.csv"
         self._init_output_csv()
 
-        with open(self.category_csv, newline="", encoding="utf-8") as f:
-            self.categories = list(csv.DictReader(f))
+        self.categories = self._load_categories()
 
-        # DB INIT
         self.db = self._connect_db()
         self._create_table()
+
+    # --------------------------------------------------
+    # CATEGORY CSV
+    # --------------------------------------------------
+    def _load_categories(self):
+        with open(self.category_csv, newline="", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+
+    def _category_exists(self, name):
+        return any(
+            row["category_name"].strip().lower() == name.lower()
+            for row in self.categories
+        )
+
+    def _append_category(self, name):
+        if self._category_exists(name):
+            return
+
+        next_si = len(self.categories) + 1
+
+        with open(self.category_csv, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow([next_si, name])
+
+        self.categories.append({
+            "si_no": next_si,
+            "category_name": name
+        })
+
+        print(f"[CSV] ➕ Appended new category → {name}")
 
     # --------------------------------------------------
     # DATABASE
@@ -46,7 +76,7 @@ class ContractsController:
     def _connect_db(self):
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
-            print("[DB] ✅ Connected to database")
+            print("[DB] ✅ Connected")
             return conn
         except Error as e:
             print(f"[DB] ❌ Connection failed: {e}")
@@ -85,34 +115,9 @@ class ContractsController:
         cur.execute(query)
         self.db.commit()
         cur.close()
-        print("[DB] ✅ Table ready")
-
-    def save_row(self, row):
-        # CSV
-        with open(self.output_csv, "a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(row)
-
-        # DB
-        if not self.db:
-            return
-
-        query = """
-        INSERT INTO contracts (
-            serial_no, category_name, bid_no, product, brand, model,
-            ordered_quantity, price, total_value,
-            buyer_dept_org, organization_name, buyer_designation,
-            state, buyer_department, office_zone, buying_mode,
-            contract_date, order_status, download_link
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """
-
-        cur = self.db.cursor()
-        cur.execute(query, row)
-        self.db.commit()
-        cur.close()
 
     # --------------------------------------------------
-    # CSV INIT
+    # CSV OUTPUT
     # --------------------------------------------------
     def _init_output_csv(self):
         if not self.output_csv.exists():
@@ -125,6 +130,27 @@ class ContractsController:
                     "state", "buyer_department", "office_zone", "buying_mode",
                     "contract_date", "order_status", "download_link"
                 ])
+
+    def save_row(self, row):
+        with open(self.output_csv, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow(row)
+
+        if not self.db:
+            return
+
+        query = """
+        INSERT INTO contracts (
+            serial_no, category_name, bid_no, product, brand, model,
+            ordered_quantity, price, total_value,
+            buyer_dept_org, organization_name, buyer_designation,
+            state, buyer_department, office_zone, buying_mode,
+            contract_date, order_status, download_link
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """
+        cur = self.db.cursor()
+        cur.execute(query, row)
+        self.db.commit()
+        cur.close()
 
     # --------------------------------------------------
     # NAVIGATION
@@ -163,7 +189,7 @@ class ContractsController:
         )
 
     # --------------------------------------------------
-    # CATEGORY
+    # CATEGORY SEARCH + APPEND
     # --------------------------------------------------
     def process_category(self, category_name):
         self.page.click(".select2-selection")
@@ -179,15 +205,20 @@ class ContractsController:
         )
 
         for i in range(options.count()):
+            txt = options.nth(i).inner_text().strip()
+            if txt:
+                self._append_category(txt)
+
+        for i in range(options.count()):
             if options.nth(i).inner_text().strip().lower() == category_name.lower():
                 options.nth(i).click()
                 self.page.wait_for_timeout(1000)
                 return
 
-        raise Exception("Category not found")
+        raise Exception(f"Exact category not found: {category_name}")
 
     # --------------------------------------------------
-    # CAPTCHA
+    # MAIN CAPTCHA
     # --------------------------------------------------
     def solve_main_captcha_and_search(self):
         src = self.page.locator("#captchaimg1").get_attribute("src")
@@ -195,7 +226,7 @@ class ContractsController:
 
         text, conf = ensemble_solve(img)
         if not text or conf < 0.55:
-            raise Exception("Main captcha failed")
+            raise Exception("Main CAPTCHA failed")
 
         self.page.fill("#captcha_code1", text)
         self.page.click("#searchlocation1")
@@ -209,7 +240,7 @@ class ContractsController:
         return loc.count() > 0 and "No Result Found" in loc.first.inner_text()
 
     # --------------------------------------------------
-    # ROWS
+    # ROW SCRAPING
     # --------------------------------------------------
     def process_rows(self, category_name):
         if self.has_no_result():
@@ -218,42 +249,39 @@ class ContractsController:
 
         self.page.wait_for_selector("span.ajxtag_order_number", timeout=30000)
 
-        bid_nodes = self.page.locator("span.ajxtag_order_number")
-        item_nodes = self.page.locator("span.ajxtag_item_title")
-        qty_nodes = self.page.locator("span.ajxtag_quantity")
-        value_nodes = self.page.locator("span.ajxtag_totalvalue")
-        buyer_nodes = self.page.locator("span.ajxtag_buyer_dept_org")
-        mode_nodes = self.page.locator("span.ajxtag_buying_mode")
-        date_nodes = self.page.locator("span.ajxtag_contract_date")
-        status_nodes = self.page.locator("span.ajxtag_order_status")
+        bids = self.page.locator("span.ajxtag_order_number")
+        items = self.page.locator("span.ajxtag_item_title")
+        qtys = self.page.locator("span.ajxtag_quantity")
+        values = self.page.locator("span.ajxtag_totalvalue")
+        buyers = self.page.locator("span.ajxtag_buyer_dept_org")
+        modes = self.page.locator("span.ajxtag_buying_mode")
+        dates = self.page.locator("span.ajxtag_contract_date")
+        status = self.page.locator("span.ajxtag_order_status")
 
-        total = bid_nodes.count()
-        print(f"[INFO] Total tenders: {total}")
-
-        for i in range(total):
+        for i in range(bids.count()):
             row = [
                 i + 1,
                 category_name,
-                bid_nodes.nth(i).inner_text().strip(),
-                item_nodes.nth(i*3).inner_text().strip(),
-                item_nodes.nth(i*3+1).inner_text().strip(),
-                item_nodes.nth(i*3+2).inner_text().strip(),
-                qty_nodes.nth(i).inner_text().strip(),
-                value_nodes.nth(i*2+1).inner_text().strip(),
-                value_nodes.nth(i*2).inner_text().strip(),
-                buyer_nodes.nth(i*3).inner_text().strip(),
-                buyer_nodes.nth(i*3+1).inner_text().strip(),
-                buyer_nodes.nth(i*3+2).inner_text().strip(),
-                mode_nodes.nth(i*4).inner_text().strip(),
-                mode_nodes.nth(i*4+1).inner_text().strip(),
-                mode_nodes.nth(i*4+2).inner_text().strip(),
-                mode_nodes.nth(i*4+3).inner_text().strip(),
-                date_nodes.nth(i).inner_text().strip(),
-                status_nodes.nth(i).inner_text().strip(),
+                bids.nth(i).inner_text().strip(),
+                items.nth(i*3).inner_text().strip(),
+                items.nth(i*3+1).inner_text().strip(),
+                items.nth(i*3+2).inner_text().strip(),
+                qtys.nth(i).inner_text().strip(),
+                values.nth(i*2+1).inner_text().strip(),
+                values.nth(i*2).inner_text().strip(),
+                buyers.nth(i*3).inner_text().strip(),
+                buyers.nth(i*3+1).inner_text().strip(),
+                buyers.nth(i*3+2).inner_text().strip(),
+                modes.nth(i*4).inner_text().strip(),
+                modes.nth(i*4+1).inner_text().strip(),
+                modes.nth(i*4+2).inner_text().strip(),
+                modes.nth(i*4+3).inner_text().strip(),
+                dates.nth(i).inner_text().strip(),
+                status.nth(i).inner_text().strip(),
                 ""
             ]
 
-            bid_nodes.nth(i).click()
+            bids.nth(i).click()
             self.page.wait_for_timeout(2000)
 
             src = self.page.locator("#captchaimg").get_attribute("src")
@@ -267,13 +295,11 @@ class ContractsController:
                 row[-1] = self.page.locator("a#dwnbtn").get_attribute("href")
 
             self.save_row(row)
-            print(f"[ROW] Saved {row[2]}")
-
             self.page.click("button[data-dismiss='modal']")
             self.page.wait_for_timeout(2000)
 
     # --------------------------------------------------
-    # MAIN RUN METHOD  ✅ eeeTHIS FIXES YOUR ERROR
+    # MAIN LOOP
     # --------------------------------------------------
     def run(self):
         for idx, row in enumerate(self.categories, start=1):
