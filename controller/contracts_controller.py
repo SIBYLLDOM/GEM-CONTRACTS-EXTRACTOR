@@ -273,7 +273,7 @@ class ContractsController:
             self.page.wait_for_timeout(2000)
 
     # --------------------------------------------------
-    # MAIN RUN METHOD  ✅ THIS FIXES YOUR ERROR
+    # MAIN RUN METHOD  ✅ eeeTHIS FIXES YOUR ERROR
     # --------------------------------------------------
     def run(self):
         for idx, row in enumerate(self.categories, start=1):
