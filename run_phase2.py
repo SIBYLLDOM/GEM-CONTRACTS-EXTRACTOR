@@ -1,10 +1,10 @@
 from playwright_manager import PlaywrightManager
-from controller.contracts_controller import ContractsController
+from controller.pdfdownload import PDFDownloader
 
 
 def main():
     print("=" * 70)
-    print("🚀 GeM Contracts Automation System (PHASE-1)")
+    print("📥 GeM Contracts PDF Download System (PHASE-2)")
     print("=" * 70)
 
     print("\n[INIT] Launching browser...")
@@ -12,16 +12,12 @@ def main():
     browser.start()
 
     try:
-        contracts = ContractsController(browser)
-        contracts.go_to_gem_contracts()
-        contracts.run()
+        downloader = PDFDownloader(browser)
+        downloader.run()   # ✅ CORRECT METHOD
 
         print("\n" + "=" * 70)
-        print("🎉 PHASE-1 COMPLETED SUCCESSFULLY")
+        print("🎉 PHASE-2 COMPLETED")
         print("=" * 70)
-
-    except KeyboardInterrupt:
-        print("\n⚠️ Process interrupted by user")
 
     except Exception as e:
         print(f"\n❌ Critical error: {e}")
@@ -29,7 +25,8 @@ def main():
         traceback.print_exc()
 
     finally:
-        browser.stop()   # ✅ CLOSE & EXIT
+        input("\nPress ENTER to close browser...")
+        browser.stop()
 
 
 if __name__ == "__main__":
