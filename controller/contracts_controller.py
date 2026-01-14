@@ -31,6 +31,7 @@ class ContractsController:
         self.category_csv = base / "data" / "Datasets" / "categories.csv"
 
         self.categories = self._load_categories()
+
         self.db = self._connect_db()
         self._create_table()
 
@@ -75,11 +76,55 @@ class ContractsController:
         cur.close()
 
     # --------------------------------------------------
-    # CATEGORY CSV
+    # CATEGORY CSV (CLEAN + SAFE APPEND)
     # --------------------------------------------------
     def _load_categories(self):
+        if not self.category_csv.exists():
+            return []
+
+        clean_rows = []
         with open(self.category_csv, newline="", encoding="utf-8") as f:
-            return list(csv.DictReader(f))
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("category_name", "").strip():
+                    clean_rows.append({
+                        "si_no": int(row["si_no"]),
+                        "category_name": row["category_name"].strip()
+                    })
+        return clean_rows
+
+    def _append_category(self, name):
+        name = name.strip()
+        if not name:
+            return
+
+        if any(c["category_name"].lower() == name.lower() for c in self.categories):
+            return
+
+        next_si = len(self.categories) + 1
+
+        # Rewrite CSV CLEAN
+        with open(self.category_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["si_no", "category_name"])
+            writer.writeheader()
+
+            for idx, row in enumerate(self.categories, start=1):
+                writer.writerow({
+                    "si_no": idx,
+                    "category_name": row["category_name"]
+                })
+
+            writer.writerow({
+                "si_no": next_si,
+                "category_name": name
+            })
+
+        self.categories.append({
+            "si_no": next_si,
+            "category_name": name
+        })
+
+        print(f"[CSV] ➕ Appended category → {name}")
 
     # --------------------------------------------------
     # NAVIGATION
@@ -113,7 +158,7 @@ class ContractsController:
         })
 
     # --------------------------------------------------
-    # CATEGORY SEARCH
+    # CATEGORY SEARCH + CSV AUTO APPEND
     # --------------------------------------------------
     def process_category(self, category):
         self.page.click(".select2-selection")
@@ -128,6 +173,10 @@ class ContractsController:
         )
 
         for i in range(options.count()):
+            txt = options.nth(i).inner_text().strip()
+            self._append_category(txt)
+
+        for i in range(options.count()):
             if options.nth(i).inner_text().strip().lower() == category.lower():
                 options.nth(i).click()
                 return
@@ -135,13 +184,13 @@ class ContractsController:
         raise Exception(f"Category exact match missing → {category}")
 
     # --------------------------------------------------
-    # MAIN CAPTCHA
+    # CAPTCHA
     # --------------------------------------------------
     def solve_main_captcha_and_search(self):
         src = self.page.locator("#captchaimg1").get_attribute("src")
         img = Image.open(io.BytesIO(base64.b64decode(src.split(",")[1])))
-        text, conf = ensemble_solve(img)
 
+        text, conf = ensemble_solve(img)
         if not text or conf < 0.55:
             raise Exception("Main CAPTCHA failed")
 
@@ -150,9 +199,20 @@ class ContractsController:
         self.page.wait_for_timeout(4000)
 
     # --------------------------------------------------
-    # PHASE-1 — ROW SCRAPING ONLY
+    # NO RESULT CHECK
+    # --------------------------------------------------
+    def has_no_result(self):
+        loc = self.page.locator("div[style*='color:red']")
+        return loc.count() > 0 and "No Result Found" in loc.first.inner_text()
+
+    # --------------------------------------------------
+    # PHASE-1 ROW SCRAPING (UNCHANGED LOGIC)
     # --------------------------------------------------
     def phase1_scrape_rows(self, category):
+        if self.has_no_result():
+            print(f"[SKIP] No Result Found → {category}")
+            return
+
         self.page.wait_for_selector("span.ajxtag_order_number", timeout=30000)
 
         bids = self.page.locator("span.ajxtag_order_number")
@@ -203,13 +263,12 @@ class ContractsController:
         print(f"[PHASE-1] Completed → {category}")
 
     # --------------------------------------------------
-    # MAIN LOOP (PHASE-1 ONLY)
+    # MAIN LOOP (PHASE-1)
     # --------------------------------------------------
     def run(self):
         print("🚀 PHASE-1 START")
         for idx, row in enumerate(self.categories, start=1):
             category = row["category_name"]
-
             print(f"\n[{idx}/{len(self.categories)}] Processing → {category}")
 
             self.reset_to_home()

@@ -13,4 +13,8 @@ pytesseract>=0.3.10
 # Numerical dependency (required by OpenCV)
 numpy>=1.24.0
 
+# PDF extraction (Phase 3) - install at least one
+pdfplumber>=0.10.0
+PyPDF2>=3.0.0
+
 mysql-connector-python==8.3.0
