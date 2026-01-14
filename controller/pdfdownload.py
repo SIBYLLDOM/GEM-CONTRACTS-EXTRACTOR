@@ -68,6 +68,7 @@ class PDFDownloader:
     # SEARCH BID + CAPTCHA + SEARCH CLICK
     # --------------------------------------------------
     def search_bid(self, bid_no):
+        """Returns True if search success, False if captcha error"""
         self.page.fill("#bno", "")
         self.page.fill("#bno", bid_no)
 
@@ -79,13 +80,22 @@ class PDFDownloader:
 
         text, conf = ensemble_solve(img)
         if not text or conf < 0.55:
-            raise Exception("Search CAPTCHA failed")
+            print("[CAPTCHA] ❌ Low confidence on Search CAPTCHA")
+            return False
 
         self.page.fill("#captcha_code1", text)
-
-        # IMPORTANT: click search AFTER captcha
         self.page.click("#searchlocation1")
         self.page.wait_for_timeout(4000)
+
+        # Check for red error message
+        pcaptcha_error = self.page.locator("#pcaptcha_code1")
+        if pcaptcha_error.is_visible():
+            err_text = pcaptcha_error.inner_text().strip()
+            if "Please enter correct Confirmation Code" in err_text:
+                print(f"[CAPTCHA] ❌ Search Error: {err_text}")
+                return False
+        
+        return True
 
     # --------------------------------------------------
     # DOWNLOAD PDF
@@ -109,11 +119,27 @@ class PDFDownloader:
         text, conf = ensemble_solve(img)
 
         if not text or conf < 0.55:
-            raise Exception("Popup CAPTCHA failed")
+            print("[CAPTCHA] ❌ Low confidence on Popup CAPTCHA")
+            return "RETRY"
 
         self.page.fill("#captcha_code", text)
         self.page.click("#modelsbt")
         self.page.wait_for_timeout(3000)
+
+        # Check for red error message in popup
+        # Specifically checking the ID mentioned by user
+        pcaptcha_error = self.page.locator("#pcaptcha_code1")
+        if pcaptcha_error.is_visible():
+            err_text = pcaptcha_error.inner_text().strip()
+            if "Please enter correct Confirmation Code" in err_text:
+                print(f"[CAPTCHA] ❌ Popup Error: {err_text}")
+                return "RETRY"
+        
+        # Fallback for alternative ID just in case
+        pcaptcha_alt = self.page.locator("#pcaptcha_code")
+        if pcaptcha_alt.is_visible():
+            if "Please enter" in pcaptcha_alt.inner_text():
+                return "RETRY"
 
         with self.page.expect_download(timeout=20000) as d:
             self.page.locator("a#dwnbtn").click()
@@ -128,38 +154,70 @@ class PDFDownloader:
     # MAIN PHASE-2 LOGIC
     # --------------------------------------------------
     def run(self):
-        print("\n🚀 PHASE-2 START\n")
+        print("\n🚀 PHASE-2 START (Persistent Mode)\n")
 
-        pending = self.fetch_pending_bids()
-        print(f"[PHASE-2] Total rows → {len(pending)}")
+        while True:
+            # Re-fetch only rows that are STILL null
+            pending = self.fetch_pending_bids()
+            
+            if not pending:
+                print("\n" + "="*50)
+                print("🎉 ALL DOWNLOADS COMPLETE! No NULL links left.")
+                print("="*50)
+                break
 
-        for row in pending:
-            bid_no = row["bid_no"]
-            db_id = row["id"]
+            print(f"\n[PHASE-2] {len(pending)} rows remaining with NULL links. Starting processing pass...")
 
-            print(f"[PHASE-2] Processing → {bid_no}")
+            i = 0
+            # Use local list for the current pass
+            current_queue = pending.copy()
+            while i < len(current_queue):
+                row = current_queue[i]
+                bid_no = row["bid_no"]
+                db_id = row["id"]
 
-            try:
-                self.go_to_contracts()
-                self.search_bid(bid_no)
+                print(f"\n[{i+1}/{len(current_queue)}] Working on → {bid_no}")
 
-                pdf_path = self.download_pdf(bid_no)
+                try:
+                    self.go_to_contracts()
+                    
+                    # Step 1: Search Bid
+                    if not self.search_bid(bid_no):
+                        print(f"[RETRY] 🔄 CAPTCHA failed on Search. Moving {bid_no} to end of queue.")
+                        current_queue.append(row)
+                    else:
+                        # Step 2: Download PDF
+                        download_status = self.download_pdf(bid_no)
+                        
+                        if download_status == "RETRY":
+                            print(f"[RETRY] 🔄 CAPTCHA failed on Popup. Moving {bid_no} to end of queue.")
+                            current_queue.append(row)
+                            try: self.page.click("button[data-dismiss='modal']", timeout=2000)
+                            except: pass
+                        else:
+                            pdf_path = download_status
+                            # UPDATE DATABASE
+                            cur = self.db.cursor()
+                            cur.execute(
+                                "UPDATE contracts SET download_link=%s WHERE id=%s",
+                                (pdf_path, db_id)
+                            )
+                            self.db.commit()
+                            cur.close()
 
-                cur = self.db.cursor()
-                cur.execute(
-                    "UPDATE contracts SET download_link=%s WHERE id=%s",
-                    (pdf_path, db_id)
-                )
-                self.db.commit()
-                cur.close()
+                            print(f"[PDF] ✅ SUCCESS! Link updated in DB → {bid_no}")
+                            
+                            try: self.page.click("button[data-dismiss='modal']", timeout=2000)
+                            except: pass
 
-                # update rowwise.txt
-                self.rowwise_file.write_text(bid_no)
+                except Exception as e:
+                    print(f"[ERROR] ❌ Exception for {bid_no}: {e}")
+                    current_queue.append(row)
+                
+                i += 1
+                # Small delay to prevent too many DB queries in a tight loop
+                if i >= len(current_queue):
+                    print("\n[PASS] Current pass finished. Scanning database for remaining NULLs...")
+                    self.page.wait_for_timeout(2000)
 
-                print(f"[PDF] ✅ Saved → {pdf_path}")
-
-                self.page.click("button[data-dismiss='modal']")
-                self.page.wait_for_timeout(2000)
-
-            except Exception as e:
-                print(f"[PHASE-2] ❌ Failed → {bid_no} | {e}")
+        print("\n🎉 PHASE-2 COMPLETED SUCCESSFULLY")

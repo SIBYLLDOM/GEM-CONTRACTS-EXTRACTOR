@@ -93,27 +93,23 @@ class ContractsController:
                     })
         return clean_rows
 
-    def _append_category(self, name):
+    def _append_category(self, name, force=False):
         name = name.strip()
         if not name:
             return
 
-        if any(c["category_name"].lower() == name.lower() for c in self.categories):
+        if not force and any(c["category_name"].lower() == name.lower() for c in self.categories):
             return
 
         next_si = len(self.categories) + 1
 
-        # Rewrite CSV CLEAN
-        with open(self.category_csv, "w", newline="", encoding="utf-8") as f:
+        # Append to CSV
+        file_exists = self.category_csv.exists()
+        with open(self.category_csv, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=["si_no", "category_name"])
-            writer.writeheader()
-
-            for idx, row in enumerate(self.categories, start=1):
-                writer.writerow({
-                    "si_no": idx,
-                    "category_name": row["category_name"]
-                })
-
+            if not file_exists:
+                writer.writeheader()
+            
             writer.writerow({
                 "si_no": next_si,
                 "category_name": name
@@ -124,7 +120,10 @@ class ContractsController:
             "category_name": name
         })
 
-        print(f"[CSV] ➕ Appended category → {name}")
+        if force:
+            print(f"[RETRY] 🔄 Category queued for retry → {name}")
+        else:
+            print(f"[CSV] ➕ Appended category → {name}")
 
     # --------------------------------------------------
     # NAVIGATION
@@ -187,16 +186,32 @@ class ContractsController:
     # CAPTCHA
     # --------------------------------------------------
     def solve_main_captcha_and_search(self):
+        """Solves CAPTCHA and returns True if search initiated, False if CAPTCHA error"""
         src = self.page.locator("#captchaimg1").get_attribute("src")
         img = Image.open(io.BytesIO(base64.b64decode(src.split(",")[1])))
 
         text, conf = ensemble_solve(img)
         if not text or conf < 0.55:
-            raise Exception("Main CAPTCHA failed")
+            print("[CAPTCHA] ❌ Low confidence or OCR failed")
+            return False
 
         self.page.fill("#captcha_code1", text)
         self.page.click("#searchlocation1")
+        
+        # Wait for the page to either show results, no result, or an error
         self.page.wait_for_timeout(4000)
+
+        # Check for error message using specific locator mentioned by user
+        # We check both visibility and content to be absolutely sure
+        pcaptcha_error = self.page.locator("#pcaptcha_code1")
+        
+        if pcaptcha_error.is_visible():
+            err_text = pcaptcha_error.inner_text().strip()
+            if "Please enter correct Confirmation Code" in err_text or "Enter captcha code" in err_text:
+                print(f"[CAPTCHA] ❌ Error: {err_text}")
+                return False
+        
+        return True
 
     # --------------------------------------------------
     # NO RESULT CHECK
@@ -267,15 +282,31 @@ class ContractsController:
     # --------------------------------------------------
     def run(self):
         print("🚀 PHASE-1 START")
-        for idx, row in enumerate(self.categories, start=1):
+        
+        # Use simple index to allow self.categories to grow dynamically
+        i = 0
+        while i < len(self.categories):
+            row = self.categories[i]
             category = row["category_name"]
-            print(f"\n[{idx}/{len(self.categories)}] Processing → {category}")
+            print(f"\n[{i+1}/{len(self.categories)}] Processing → {category}")
 
-            self.reset_to_home()
-            self.go_to_gem_contracts()
-            self.process_category(category)
-            self.set_date_filter()
-            self.solve_main_captcha_and_search()
-            self.phase1_scrape_rows(category)
+            try:
+                self.reset_to_home()
+                self.go_to_gem_contracts()
+                self.process_category(category)
+                self.set_date_filter()
+                
+                if not self.solve_main_captcha_and_search():
+                    print(f"[FAIL] CAPTCHA failed for {category}. Queuing for retry...")
+                    self._append_category(category, force=True)
+                else:
+                    self.phase1_scrape_rows(category)
+                    
+            except Exception as e:
+                print(f"[ERROR] Failed category {category}: {e}")
+                print(f"Queuing {category} for retry...")
+                self._append_category(category, force=True)
+
+            i += 1
 
         print("🎉 PHASE-1 COMPLETED SUCCESSFULLY")
