@@ -5,3 +5,10 @@ PHASE 2: run_phase2.py
 PHASE 3: run_phase3.py
 
 MERGED PHASES: run_main.py
+
+BEFORE run
+{
+    checck the categories.csv to have the items
+    empty the scrapped, JSON folder in the folder data
+    truncate the db in contracts table
+}
