@@ -25,7 +25,6 @@ def main():
         traceback.print_exc()
 
     finally:
-        input("\nPress ENTER to close browser...")
         browser.stop()
 
 

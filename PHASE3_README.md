@@ -1,3 +1,16 @@
+# GeM Contracts Extraction Pipeline (Complete System)
+
+This project provides a fully automated pipeline to search, scrape, download, and extract details from GeM (Government e-Marketplace) contract documents.
+
+## 🚀 The Master Orchestrator
+To run the **entire system** from zero to final database update, use:
+```bash
+python run_main.py
+```
+
+## Phase Overview
+The system is divided into three distinct phases that can be run individually or via the master script:
+
 # Phase 3: PDF Extraction and CSV Generation
 
 ## Overview

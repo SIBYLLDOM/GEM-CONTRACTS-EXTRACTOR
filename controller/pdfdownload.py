@@ -24,7 +24,7 @@ class PDFDownloader:
 
         base = Path(__file__).resolve().parents[1]
 
-        self.pdf_dir = base / "data" / "ContractPDF"
+        self.pdf_dir = base / "data" / "scrapped"
         self.pdf_dir.mkdir(parents=True, exist_ok=True)
 
         self.rowwise_file = base / "data" / "rowwise.txt"
