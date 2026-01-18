@@ -155,7 +155,8 @@ class ContractsController:
     # --------------------------------------------------
     def set_date_filter(self):
         to_date = datetime.today()
-        from_date = to_date - timedelta(days=2)
+        # Set from_date to the 1st day of the current month
+        from_date = to_date.replace(day=1)
 
         self.page.evaluate("""
         (d)=>{
