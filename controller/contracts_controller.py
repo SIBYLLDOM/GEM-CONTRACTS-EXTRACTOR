@@ -32,6 +32,9 @@ class ContractsController:
 
         self.categories = self._load_categories()
 
+        self.retry_counts = {}
+        self.max_retries = 6
+
         self.db = self._connect_db()
         self._create_table()
 
@@ -98,32 +101,40 @@ class ContractsController:
         if not name:
             return
 
-        if not force and any(c["category_name"].lower() == name.lower() for c in self.categories):
-            return
+        # Check if it's already in our memory list to avoid CSV duplication
+        # We use a case-insensitive check to identify duplicates
+        existing_names = {c["category_name"].lower() for c in self.categories}
+        
+        is_duplicate = name.lower() in existing_names
 
-        next_si = len(self.categories) + 1
-
-        # Append to CSV
-        file_exists = self.category_csv.exists()
-        with open(self.category_csv, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["si_no", "category_name"])
-            if not file_exists:
-                writer.writeheader()
+        # If it's a new discovery (not in memory), append to CSV
+        if not is_duplicate:
+            next_si = len(self.categories) + 1
+            file_exists = self.category_csv.exists()
+            with open(self.category_csv, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["si_no", "category_name"])
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow({
+                    "si_no": next_si,
+                    "category_name": name
+                })
             
-            writer.writerow({
+            self.categories.append({
                 "si_no": next_si,
                 "category_name": name
             })
+            print(f"[CSV] ➕ Appended new category → {name}")
 
-        self.categories.append({
-            "si_no": next_si,
-            "category_name": name
-        })
-
-        if force:
-            print(f"[RETRY] 🔄 Category queued for retry → {name}")
-        else:
-            print(f"[CSV] ➕ Appended category → {name}")
+        elif force:
+            # If it's a retry (force=True), we add it to the memory list for processing
+            # but we DON'T write to CSV because it's already there
+            next_si = len(self.categories) + 1
+            self.categories.append({
+                "si_no": next_si,
+                "category_name": name
+            })
+            print(f"[RETRY] 🔄 Category re-queued for processing → {name}")
 
     # --------------------------------------------------
     # NAVIGATION
@@ -297,15 +308,30 @@ class ContractsController:
                 self.set_date_filter()
                 
                 if not self.solve_main_captcha_and_search():
-                    print(f"[FAIL] CAPTCHA failed for {category}. Queuing for retry...")
-                    self._append_category(category, force=True)
+                    # Increment retry count
+                    count = self.retry_counts.get(category, 0) + 1
+                    self.retry_counts[category] = count
+                    
+                    if count < self.max_retries:
+                        print(f"[FAIL] CAPTCHA failed for {category} (Attempt {count}/{self.max_retries}). Queuing for retry...")
+                        self._append_category(category, force=True)
+                    else:
+                        print(f"[LIMIT] 🛑 Max retries ({self.max_retries}) reached for {category}. Moving on.")
                 else:
                     self.phase1_scrape_rows(category)
                     
             except Exception as e:
                 print(f"[ERROR] Failed category {category}: {e}")
-                print(f"Queuing {category} for retry...")
-                self._append_category(category, force=True)
+                
+                # Increment retry count for exceptions too
+                count = self.retry_counts.get(category, 0) + 1
+                self.retry_counts[category] = count
+                
+                if count < self.max_retries:
+                    print(f"Queuing {category} for retry (Attempt {count}/{self.max_retries})...")
+                    self._append_category(category, force=True)
+                else:
+                    print(f"[LIMIT] 🛑 Max retries ({self.max_retries}) reached for {category}. Moving on.")
 
             i += 1
 
