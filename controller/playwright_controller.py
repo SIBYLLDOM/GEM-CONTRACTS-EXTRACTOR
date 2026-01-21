@@ -113,7 +113,7 @@ class ContractsController:
                         raise
 
     # --------------------------------------------------
-    # NAVIGATION
+    # NAVIGATION TO THE PAGE WHERE THE HOM
     # --------------------------------------------------
     def go_to_gem_contracts(self):
         """Navigate to GeM Contracts page"""
